@@ -1,1 +1,7 @@
 .secrets.toml
+__pycache__
+indepth-qual/
+.claude
+
+Advisory Board transcripts
+outputs

@@ -1,0 +1,8 @@
+streamlit
+python-docx
+openai
+toml
+docx2txt
+tiktoken
+PyPDF2
+clipboard
