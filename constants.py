@@ -93,30 +93,29 @@ CARD_CSS = """
 </style>
 """
 
-CODING_PROMPT = """
-You are a skilled qualitative researcher conducting thematic analysis.
+# Short intro BEFORE the transcript
+CODING_PROMPT_PREFIX = """You are a qualitative researcher. Analyze the following transcript for themes."""
 
-Your task is to analyze the transcript provided and return ONLY valid JSON
-matching the exact schema below. Do not include any commentary, markdown,
-or explanatory text outside of the JSON object.
+# Full JSON schema instruction AFTER the transcript (models pay attention to the end)
+CODING_PROMPT_SUFFIX = """
+Based on the transcript above, provide a thematic analysis.
 
-Required JSON format:
-
+You MUST respond with ONLY a valid JSON object using this EXACT structure:
 {
-  "document_summary": "A brief 1-2 sentence summary of what this transcript is about.",
+  "document_summary": "Brief 1-2 sentence summary of what this transcript is about",
   "themes": [
     {
       "id": 1,
-      "theme_title": "Title of the Major Theme",
-      "detailed_explanation": "A comprehensive paragraph explaining the significance of this theme, why it matters in this context, and how it addresses the participants' needs or the meeting's objectives.",
+      "theme_title": "Title of the Theme",
+      "detailed_explanation": "Comprehensive paragraph explaining the theme's significance",
       "subthemes": [
         {
           "subtheme_title": "Title of the Subtheme",
-          "analysis": "A detailed overview of what the quotes below illustrate about this specific subtheme.",
+          "analysis": "Overview of what the quotes illustrate",
           "supporting_quotes": [
             {
-              "text": "The direct, verbatim text of the quote.",
-              "quote_explanation": "A sentence explaining how this specific quote relates to and provides evidence for the subtheme."
+              "text": "Exact verbatim quote from transcript",
+              "quote_explanation": "How this quote supports the subtheme"
             }
           ]
         }
@@ -125,11 +124,11 @@ Required JSON format:
   ]
 }
 
-Rules:
-- Output must be valid JSON
-- Use direct verbatim quotes from the transcript
-- Include 2-4 major themes when possible
-- Each theme should have 1-3 subthemes
-- Each subtheme should have 2-3 supporting quotes
-- Do not invent content not present in the transcript
+Requirements:
+- Include 2-4 major themes
+- Each theme: 1-3 subthemes
+- Each subtheme: 2-3 supporting quotes (verbatim from transcript)
+
+CRITICAL: Your response must be ONLY valid JSON. No markdown, no explanation, no text before or after.
+Start your response with { and end with }
 """
