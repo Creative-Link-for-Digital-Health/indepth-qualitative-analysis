@@ -47,7 +47,7 @@ def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3
             response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.7,
+                temperature=0.3,
             )
 
             response_text = response.choices[0].message.content
