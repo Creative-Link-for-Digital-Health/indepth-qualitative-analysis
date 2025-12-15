@@ -149,7 +149,7 @@ def render_theme_card(theme: dict, theme_idx: int):
             # View mode - header with edit/delete buttons
             col1, col2, col3 = st.columns([20, 1, 1])
             with col1:
-                st.markdown(f"### Theme {theme.get('id', theme_idx + 1)}: {theme.get('theme_title', 'Untitled')}")
+                st.subheader(f"Theme {theme.get('id', theme_idx + 1)}: {theme.get('theme_title', 'Untitled')}", anchor=f"theme-{theme_idx}")
             with col2:
                 if st.button("✏️", key=f"edit-{theme_key}", help="Edit theme"):
                     st.session_state.editing = theme_key
@@ -181,7 +181,7 @@ def render_results():
     results = st.session_state.results
 
     # Document summary
-    st.markdown("### Document Summary")
+    st.subheader("Document Summary", anchor=False)
     st.markdown(results.get("document_summary", "No summary available."))
     st.divider()
 
