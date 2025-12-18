@@ -6,3 +6,4 @@ docx2txt
 tiktoken
 PyPDF2
 clipboard
+pydantic>=2.0

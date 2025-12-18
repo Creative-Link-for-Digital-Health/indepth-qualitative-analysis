@@ -6,7 +6,10 @@ import json
 import re
 import time
 
+from pydantic import ValidationError
+
 from constants import CODING_PROMPT_PREFIX, CODING_PROMPT_SUFFIX
+from schemas import ThematicAnalysis
 
 
 class AnalysisError(Exception):
@@ -14,26 +17,26 @@ class AnalysisError(Exception):
     pass
 
 
-class SchemaValidationError(Exception):
-    """Raised when JSON doesn't match expected schema."""
-    pass
+def _format_validation_error(error: ValidationError) -> str:
+    """Format Pydantic validation error for LLM feedback.
+
+    Converts Pydantic's ValidationError into a human-readable message
+    that the LLM can understand and act on to fix specific issues.
+    """
+    lines = ["Validation errors found:"]
+    for err in error.errors():
+        location = " -> ".join(str(loc) for loc in err["loc"])
+        lines.append(f"  - {location}: {err['msg']}")
+    return "\n".join(lines)
 
 
-def _validate_schema(data: dict) -> None:
-    """Validate that response matches expected schema. Raises SchemaValidationError if not."""
-    if "document_summary" not in data and "themes" not in data:
-        # Check if model used wrong field name
-        if "summary" in data:
-            raise SchemaValidationError(
-                "Response used 'summary' instead of 'document_summary'. Missing 'themes' array."
-            )
-        raise SchemaValidationError("Response missing required fields: 'document_summary' and 'themes'")
+def _validate_with_pydantic(data: dict) -> dict:
+    """Validate data against ThematicAnalysis schema.
 
-    if "themes" not in data or not isinstance(data.get("themes"), list):
-        raise SchemaValidationError("Response missing 'themes' array or themes is not a list")
-
-    if len(data.get("themes", [])) == 0:
-        raise SchemaValidationError("Response has empty 'themes' array - no themes were extracted")
+    Returns the validated data as a dict. Raises ValidationError if invalid.
+    """
+    validated = ThematicAnalysis.model_validate(data)
+    return validated.model_dump()
 
 
 def _extract_json(response_text: str) -> dict:
@@ -67,11 +70,14 @@ def _extract_json(response_text: str) -> dict:
 def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3) -> dict:
     """Call LLM to analyze transcript and return structured JSON.
 
-    Retries up to max_retries times with exponential backoff on JSON parse failures.
+    Uses Pydantic validation to ensure output matches the ThematicAnalysis schema.
+    On validation failure, feeds the error back to the LLM for correction.
+    Retries up to max_retries times with exponential backoff.
     Raises AnalysisError if all retries fail.
     """
     # Put JSON instruction at END of prompt - models pay attention to the end
-    full_prompt = f"{CODING_PROMPT_PREFIX}\n\n{transcript}\n\n{CODING_PROMPT_SUFFIX}"
+    initial_prompt = f"{CODING_PROMPT_PREFIX}\n\n{transcript}\n\n{CODING_PROMPT_SUFFIX}"
+    messages = [{"role": "user", "content": initial_prompt}]
     last_error = None
     last_response = None
 
@@ -79,28 +85,47 @@ def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3
         try:
             response = client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": full_prompt}],
+                messages=messages,
                 temperature=0.3,
             )
 
             response_text = response.choices[0].message.content
             last_response = response_text
-            print(f"[DEBUG] Response length: {len(response_text)} chars")
-            print(f"[DEBUG] First 500 chars: {response_text[:500]}")
-            result = _extract_json(response_text)
-            _validate_schema(result)
-            return result
 
-        except (json.JSONDecodeError, SchemaValidationError) as e:
+            # Extract JSON from response
+            result = _extract_json(response_text)
+
+            # Validate with Pydantic - raises ValidationError on failure
+            validated_result = _validate_with_pydantic(result)
+            return validated_result
+
+        except json.JSONDecodeError as e:
             last_error = e
-            print(f"[DEBUG] JSON parse error on attempt {attempt}: {e}")
-            if attempt < max_retries:
-                # Exponential backoff: 2s, 4s
-                time.sleep(2 ** attempt)
-                continue
+            error_msg = f"JSON parsing failed: {str(e)}"
+
+        except ValidationError as e:
+            last_error = e
+            error_msg = _format_validation_error(e)
+
         except Exception as e:
             # For non-JSON errors (API errors, network issues), raise immediately
             raise AnalysisError(f"API error: {str(e)}") from e
+
+        # If we're here, validation failed - prepare retry with error feedback
+        if attempt < max_retries:
+            # Add the failed response and error feedback to conversation
+            messages.append({"role": "assistant", "content": response_text})
+            messages.append({
+                "role": "user",
+                "content": f"""Your previous response had errors:
+
+{error_msg}
+
+Please fix these issues and respond with ONLY valid JSON matching the required schema.
+Start your response with {{ and end with }}. No markdown, no explanation."""
+            })
+            # Exponential backoff: 2s, 4s
+            time.sleep(2 ** attempt)
 
     # All retries exhausted - include response snippet in error
     snippet = last_response[:300] if last_response else "No response received"

@@ -1,20 +1,38 @@
 """
 CRUD operations for themes, subthemes, and quotes.
+
+Uses Pydantic models from schemas.py to ensure type safety when creating new items.
 """
 
 import streamlit as st
+
+from schemas import Quote, Subtheme, Theme
 
 
 def add_theme():
     """Add a new empty theme to results."""
     themes = st.session_state.results.get("themes", [])
     new_id = max([t.get("id", 0) for t in themes], default=0) + 1
-    themes.append({
-        "id": new_id,
-        "theme_title": "New Theme",
-        "detailed_explanation": "Enter explanation here...",
-        "subthemes": []
-    })
+
+    # Use Pydantic model for type-safe creation
+    new_theme = Theme(
+        id=new_id,
+        theme_title="New Theme",
+        detailed_explanation="Enter explanation here...",
+        subthemes=[
+            Subtheme(
+                subtheme_title="New Subtheme",
+                analysis="Enter analysis here...",
+                supporting_quotes=[
+                    Quote(
+                        text="Enter quote text...",
+                        quote_explanation="Enter explanation...",
+                    )
+                ],
+            )
+        ],
+    )
+    themes.append(new_theme.model_dump())
     st.session_state.results["themes"] = themes
 
 
@@ -33,11 +51,18 @@ def add_subtheme(theme_idx: int):
     """Add a new empty subtheme to a theme."""
     themes = st.session_state.results.get("themes", [])
     if 0 <= theme_idx < len(themes):
-        themes[theme_idx].setdefault("subthemes", []).append({
-            "subtheme_title": "New Subtheme",
-            "analysis": "Enter analysis here...",
-            "supporting_quotes": []
-        })
+        # Use Pydantic model for type-safe creation
+        new_subtheme = Subtheme(
+            subtheme_title="New Subtheme",
+            analysis="Enter analysis here...",
+            supporting_quotes=[
+                Quote(
+                    text="Enter quote text...",
+                    quote_explanation="Enter explanation...",
+                )
+            ],
+        )
+        themes[theme_idx].setdefault("subthemes", []).append(new_subtheme.model_dump())
 
 
 def delete_subtheme(theme_idx: int, subtheme_idx: int):
@@ -56,10 +81,14 @@ def add_quote(theme_idx: int, subtheme_idx: int):
     if 0 <= theme_idx < len(themes):
         subthemes = themes[theme_idx].get("subthemes", [])
         if 0 <= subtheme_idx < len(subthemes):
-            subthemes[subtheme_idx].setdefault("supporting_quotes", []).append({
-                "text": "Enter quote text...",
-                "quote_explanation": "Enter explanation..."
-            })
+            # Use Pydantic model for type-safe creation
+            new_quote = Quote(
+                text="Enter quote text...",
+                quote_explanation="Enter explanation...",
+            )
+            subthemes[subtheme_idx].setdefault("supporting_quotes", []).append(
+                new_quote.model_dump()
+            )
 
 
 def delete_quote(theme_idx: int, subtheme_idx: int, quote_idx: int):

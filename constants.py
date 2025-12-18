@@ -48,7 +48,7 @@ CARD_CSS = """
     margin-bottom: 0.5rem;
 }
 .subtheme-title {
-    font-size: 1rem;
+    font-size: 1.3rem;
     font-weight: 600;
     color: #cbd5e0;
 }
