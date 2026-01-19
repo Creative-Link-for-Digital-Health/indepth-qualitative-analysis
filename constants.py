@@ -93,10 +93,8 @@ CARD_CSS = """
 </style>
 """
 
-# Short intro BEFORE the transcript
+# Legacy single-pass prompts (kept for reference)
 CODING_PROMPT_PREFIX = """You are a qualitative researcher. Analyze the following transcript for themes."""
-
-# Full JSON schema instruction AFTER the transcript (models pay attention to the end)
 CODING_PROMPT_SUFFIX = """
 Based on the transcript above, provide a thematic analysis.
 
@@ -131,4 +129,71 @@ Requirements:
 
 CRITICAL: Your response must be ONLY valid JSON. No markdown, no explanation, no text before or after.
 Start your response with { and end with }
+"""
+
+# =============================================================================
+# TWO-PASS PROMPTS (Reduces quote hallucination)
+# =============================================================================
+
+# Pass 1: Theme extraction (no quotes)
+THEME_EXTRACTION_PREFIX = """You are a qualitative researcher. Analyze the following transcript and identify the major themes and subthemes."""
+
+THEME_EXTRACTION_SUFFIX = """
+Based on the transcript above, identify the thematic structure.
+
+You MUST respond with ONLY a valid JSON object using this EXACT structure:
+{
+  "document_summary": "Brief 1-2 sentence summary of what this transcript is about",
+  "themes": [
+    {
+      "id": 1,
+      "theme_title": "Title of the Theme",
+      "detailed_explanation": "Comprehensive paragraph explaining the theme's significance",
+      "subthemes": [
+        {
+          "subtheme_title": "Title of the Subtheme",
+          "analysis": "Overview of what participants discussed related to this subtheme"
+        }
+      ]
+    }
+  ]
+}
+
+Requirements:
+- Include 2-4 major themes
+- Each theme: 1-3 subthemes
+- Do NOT include quotes yet - just identify the themes and subthemes
+
+CRITICAL: Your response must be ONLY valid JSON. No markdown, no explanation.
+Start your response with { and end with }
+"""
+
+# Pass 2: Quote extraction for a specific subtheme
+QUOTE_EXTRACTION_PROMPT = """You are a qualitative researcher. Your task is to find EXACT VERBATIM quotes from the transcript that support a specific subtheme.
+
+TRANSCRIPT:
+{transcript}
+
+---
+
+Find quotes that support this subtheme:
+Theme: {theme_title}
+Subtheme: {subtheme_title}
+Analysis: {subtheme_analysis}
+
+---
+
+Return 2-3 quotes that support this subtheme. You MUST respond with ONLY a valid JSON array:
+[
+  {{
+    "text": "Copy the EXACT words from the transcript here - character for character",
+    "quote_explanation": "How this quote supports the subtheme"
+  }}
+]
+
+CRITICAL RULES:
+1. Quotes must be EXACT VERBATIM text from the transcript above
+2. Copy word-for-word - do not paraphrase, summarize, or combine quotes
+3. If you cannot find good supporting quotes, return fewer quotes rather than making them up
+4. Start your response with [ and end with ]
 """

@@ -7,6 +7,7 @@ import toml
 import docx
 from io import BytesIO
 from datetime import datetime
+from pathlib import Path
 
 from constants import SECRETS_PATH, OUTPUT_DIR
 
@@ -46,3 +47,25 @@ def save_results(results: dict, filename: str):
         json.dump(results, f, indent=2, ensure_ascii=False)
 
     return output_path
+
+
+def parse_file_from_path(file_path: Path) -> str:
+    """Parse file from filesystem path for batch processing.
+
+    Args:
+        file_path: Path object pointing to the transcript file
+
+    Returns:
+        str: Text content of the file
+
+    Raises:
+        ValueError: If file type is not supported (.txt or .docx)
+    """
+    with open(file_path, 'rb') as f:
+        if file_path.suffix.lower() == '.txt':
+            return f.read().decode('utf-8')
+        elif file_path.suffix.lower() == '.docx':
+            doc = docx.Document(f)
+            return '\n'.join([p.text for p in doc.paragraphs])
+        else:
+            raise ValueError(f"Unsupported file type: {file_path.suffix}")

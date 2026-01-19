@@ -94,6 +94,7 @@ def main():
                 st.session_state.results = results
                 st.session_state.saved_path = saved_path
                 st.session_state.base_filename = base_filename
+                st.session_state.transcript_text = transcript_text  # For future hyperlink support
                 st.session_state.editing = None
 
             except AnalysisError:

@@ -8,8 +8,13 @@ import time
 
 from pydantic import ValidationError
 
-from constants import CODING_PROMPT_PREFIX, CODING_PROMPT_SUFFIX
-from schemas import ThematicAnalysis
+from constants import (
+    THEME_EXTRACTION_PREFIX,
+    THEME_EXTRACTION_SUFFIX,
+    QUOTE_EXTRACTION_PROMPT,
+)
+from schemas import ThematicAnalysis, ThemeExtraction
+from quote_validation import validate_quote, normalize_text
 
 
 class AnalysisError(Exception):
@@ -67,16 +72,12 @@ def _extract_json(response_text: str) -> dict:
     raise json.JSONDecodeError("Could not extract valid JSON", response_text, 0)
 
 
-def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3) -> dict:
-    """Call LLM to analyze transcript and return structured JSON.
+def _extract_themes(client, model: str, transcript: str, max_retries: int = 3) -> dict:
+    """Pass 1: Extract theme structure without quotes.
 
-    Uses Pydantic validation to ensure output matches the ThematicAnalysis schema.
-    On validation failure, feeds the error back to the LLM for correction.
-    Retries up to max_retries times with exponential backoff.
-    Raises AnalysisError if all retries fail.
+    Returns a ThemeExtraction dict (themes/subthemes without quotes).
     """
-    # Put JSON instruction at END of prompt - models pay attention to the end
-    initial_prompt = f"{CODING_PROMPT_PREFIX}\n\n{transcript}\n\n{CODING_PROMPT_SUFFIX}"
+    initial_prompt = f"{THEME_EXTRACTION_PREFIX}\n\n{transcript}\n\n{THEME_EXTRACTION_SUFFIX}"
     messages = [{"role": "user", "content": initial_prompt}]
     last_error = None
     last_response = None
@@ -95,9 +96,9 @@ def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3
             # Extract JSON from response
             result = _extract_json(response_text)
 
-            # Validate with Pydantic - raises ValidationError on failure
-            validated_result = _validate_with_pydantic(result)
-            return validated_result
+            # Validate with Pydantic against ThemeExtraction schema
+            validated = ThemeExtraction.model_validate(result)
+            return validated.model_dump()
 
         except json.JSONDecodeError as e:
             last_error = e
@@ -108,12 +109,10 @@ def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3
             error_msg = _format_validation_error(e)
 
         except Exception as e:
-            # For non-JSON errors (API errors, network issues), raise immediately
-            raise AnalysisError(f"API error: {str(e)}") from e
+            raise AnalysisError(f"API error during theme extraction: {str(e)}") from e
 
-        # If we're here, validation failed - prepare retry with error feedback
+        # Retry with error feedback
         if attempt < max_retries:
-            # Add the failed response and error feedback to conversation
             messages.append({"role": "assistant", "content": response_text})
             messages.append({
                 "role": "user",
@@ -124,16 +123,205 @@ def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3
 Please fix these issues and respond with ONLY valid JSON matching the required schema.
 Start your response with {{ and end with }}. No markdown, no explanation."""
             })
-            # Exponential backoff: 2s, 4s
             time.sleep(2 ** attempt)
 
-    # All retries exhausted - include response snippet in error
     snippet = last_response[:300] if last_response else "No response received"
     raise AnalysisError(
-        f"Failed to get valid JSON after {max_retries} attempts. "
+        f"Failed to extract themes after {max_retries} attempts. "
         f"Last error: {str(last_error)}\n"
         f"Response snippet: {snippet}..."
     )
+
+
+def _extract_quotes_for_subtheme(
+    client,
+    model: str,
+    transcript: str,
+    theme_title: str,
+    subtheme_title: str,
+    subtheme_analysis: str,
+    max_retries: int = 2,
+) -> list:
+    """Pass 2: Extract quotes for a specific subtheme.
+
+    Returns a list of Quote dicts. May return empty list if no valid quotes found.
+    """
+    prompt = QUOTE_EXTRACTION_PROMPT.format(
+        transcript=transcript,
+        theme_title=theme_title,
+        subtheme_title=subtheme_title,
+        subtheme_analysis=subtheme_analysis,
+    )
+    messages = [{"role": "user", "content": prompt}]
+    last_error = None
+    last_response = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.3,
+            )
+
+            response_text = response.choices[0].message.content
+            last_response = response_text
+
+            # Extract JSON array from response
+            result = _extract_json_array(response_text)
+
+            # Validate each quote has required fields
+            validated_quotes = []
+            for quote in result:
+                if isinstance(quote, dict) and "text" in quote and "quote_explanation" in quote:
+                    if quote["text"].strip() and quote["quote_explanation"].strip():
+                        validated_quotes.append(quote)
+
+            return validated_quotes
+
+        except json.JSONDecodeError as e:
+            last_error = e
+            error_msg = f"JSON parsing failed: {str(e)}"
+
+        except Exception as e:
+            last_error = e
+            error_msg = str(e)
+
+        # Retry with error feedback
+        if attempt < max_retries:
+            messages.append({"role": "assistant", "content": response_text})
+            messages.append({
+                "role": "user",
+                "content": f"""Your previous response had errors:
+
+{error_msg}
+
+Please respond with ONLY a valid JSON array of quotes.
+Start your response with [ and end with ]. No markdown, no explanation."""
+            })
+            time.sleep(1)
+
+    # Return empty list on failure (quote extraction is best-effort)
+    print(f"[QUOTE EXTRACTION] Failed for subtheme '{subtheme_title}' after {max_retries} attempts")
+    return []
+
+
+def _extract_json_array(response_text: str) -> list:
+    """Extract and parse JSON array from LLM response text."""
+    # Try direct parsing first
+    try:
+        result = json.loads(response_text)
+        if isinstance(result, list):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # Try to extract array if wrapped in markdown
+    if "```json" in response_text.lower():
+        match = re.search(r"```[jJ][sS][oO][nN]\s*(.*?)```", response_text, re.DOTALL)
+        if match:
+            result = json.loads(match.group(1).strip())
+            if isinstance(result, list):
+                return result
+    elif "```" in response_text:
+        json_str = response_text.split("```")[1].split("```")[0]
+        result = json.loads(json_str)
+        if isinstance(result, list):
+            return result
+
+    # Try to find JSON array by matching brackets
+    first_bracket = response_text.find("[")
+    last_bracket = response_text.rfind("]")
+    if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
+        json_str = response_text[first_bracket:last_bracket + 1]
+        result = json.loads(json_str)
+        if isinstance(result, list):
+            return result
+
+    raise json.JSONDecodeError("Could not extract valid JSON array", response_text, 0)
+
+
+def analyze_transcript(client, model: str, transcript: str, max_retries: int = 3) -> dict:
+    """Analyze transcript using two-pass approach for better quote accuracy.
+
+    Pass 1: Extract themes and subthemes (no quotes)
+    Pass 2: For each subtheme, extract supporting quotes
+
+    This approach reduces quote hallucination by having the LLM focus on
+    one task at a time: first understanding the themes, then finding
+    verbatim quotes to support each subtheme.
+    """
+    # Pass 1: Extract theme structure
+    print("[ANALYSIS] Pass 1: Extracting themes and subthemes...")
+    theme_structure = _extract_themes(client, model, transcript, max_retries)
+
+    # Pre-normalize transcript for quote validation
+    normalized_transcript = normalize_text(transcript)
+
+    # Pass 2: Extract quotes for each subtheme
+    total_subthemes = sum(len(t["subthemes"]) for t in theme_structure["themes"])
+    current_subtheme = 0
+    quote_retries = 2  # Additional retries for subthemes with no valid quotes
+
+    for theme in theme_structure["themes"]:
+        theme_title = theme["theme_title"]
+
+        for subtheme in theme["subthemes"]:
+            current_subtheme += 1
+            subtheme_title = subtheme["subtheme_title"]
+            print(f"[ANALYSIS] Pass 2: Extracting quotes for subtheme {current_subtheme}/{total_subthemes}: {subtheme_title}")
+
+            valid_quotes = []
+
+            # Try multiple times to get valid quotes
+            for attempt in range(1, quote_retries + 1):
+                # Get quotes from LLM
+                raw_quotes = _extract_quotes_for_subtheme(
+                    client,
+                    model,
+                    transcript,
+                    theme_title,
+                    subtheme_title,
+                    subtheme["analysis"],
+                )
+
+                # Validate each quote against transcript
+                for quote in raw_quotes:
+                    result = validate_quote(quote["text"], normalized_transcript)
+                    if result.is_valid:
+                        valid_quotes.append(quote)
+                    else:
+                        print(f"[QUOTE VALIDATION] Rejected: '{quote['text'][:50]}...' - {result.reason}")
+
+                if valid_quotes:
+                    break  # Got at least one valid quote
+                elif attempt < quote_retries:
+                    print(f"[RETRY] No valid quotes found, retrying... (attempt {attempt + 1}/{quote_retries})")
+
+            # Add validated quotes to subtheme
+            subtheme["supporting_quotes"] = valid_quotes
+
+            if not valid_quotes:
+                print(f"[WARNING] No valid quotes found for subtheme: {subtheme_title}")
+
+    # Remove subthemes with no valid quotes (required by schema)
+    for theme in theme_structure["themes"]:
+        theme["subthemes"] = [
+            s for s in theme["subthemes"] if s.get("supporting_quotes")
+        ]
+
+    # Remove themes with no subthemes
+    theme_structure["themes"] = [
+        t for t in theme_structure["themes"] if t.get("subthemes")
+    ]
+
+    # Check if we have any themes left
+    if not theme_structure["themes"]:
+        raise AnalysisError("No valid themes with quotes could be extracted from the transcript.")
+
+    # Final validation to ensure structure matches ThematicAnalysis
+    validated = ThematicAnalysis.model_validate(theme_structure)
+    return validated.model_dump()
 
 
 def format_results_as_text(results: dict) -> str:
