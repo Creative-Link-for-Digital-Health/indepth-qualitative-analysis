@@ -7,3 +7,4 @@ tiktoken
 PyPDF2
 clipboard
 pydantic>=2.0
+whisperx
