@@ -2,6 +2,7 @@
 import streamlit as st
 import tempfile
 import os
+import toml
 from pathlib import Path
 import transcription_utils
 
@@ -19,17 +20,21 @@ def main():
     audio_file = st.file_uploader("Upload Audio", type=["mp3", "wav", "m4a"])
     
     # WhisperX settings
-    col1, col2 = st.columns(2)
-    with col1:
-        model_size = st.selectbox("Model Size", ["tiny", "base", "small", "medium", "large-v2", "large-v3"], index=2)
-    with col2:
-        hf_token = st.text_input("Hugging Face Token (for Diarization)", type="password", help="Required for speaker diarization (pyannote/speaker-diarization-3.1).")
+    model_size = "large-v3"
+    
+    # Load secrets
+    try:
+        secrets = toml.load(".secrets.toml")
+        hf_token = secrets.get("HUGGINGFACE_API_KEY")
+    except Exception as e:
+        hf_token = None
+        st.warning(f"Could not load .secrets.toml: {e}")
     
     if audio_file is not None:
         # Check if we should process
         if st.button("Start Transcription"):
             if not hf_token:
-                st.warning("Please provide a Hugging Face Token for Speaker Diarization.")
+                st.error("Please provide a Hugging Face Token in .secrets.toml (HUGGINGFACE_API_KEY).")
             else:
                 with st.spinner("Processing audio... This involves loading models, transcribing, aligning, and diarizing. Please wait."):
                     try:

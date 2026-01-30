@@ -7,11 +7,24 @@ from pathlib import Path
 
 import streamlit as st
 from openai import OpenAI
+import httpx
 
 from constants import CARD_CSS
 from file_utils import load_api_params, parse_uploaded_file, save_results
 from api_utils import analyze_transcript, format_results_as_text, AnalysisError
 from ui_components import render_results
+
+
+def is_ollama_running(api_url: str) -> bool:
+    """Check if Ollama instance is accessible."""
+    try:
+        # Check root endpoint which usually returns "Ollama is running"
+        check_url = api_url.split('/v1')[0]
+        # Short timeout since it's a local check
+        response = httpx.get(check_url, timeout=2.0)
+        return response.status_code == 200
+    except Exception:
+        return False
 
 
 def main():
@@ -23,6 +36,20 @@ def main():
 
     # Apply custom CSS
     st.markdown(CARD_CSS, unsafe_allow_html=True)
+
+    # Check if Ollama is running
+    try:
+        api_params = load_api_params()
+        if not is_ollama_running(api_params['API_URL']):
+            st.error(
+                f"⚠️ **Ollama is not running.**\n\n"
+                f"Could not connect to `{api_params['API_URL']}`.\n"
+                "Please make sure Ollama is running locally: `ollama serve`"
+            )
+            st.stop()
+    except Exception as e:
+        # Fallback if secrets cannot be loaded, though that would likely fail later anyway
+        pass
 
     st.title("Qualitative Theme Analysis", anchor=False)
     st.write("Upload a transcript to discover themes and extract supporting quotes.")
@@ -41,6 +68,8 @@ def main():
         st.session_state.results = None
     if 'base_filename' not in st.session_state:
         st.session_state.base_filename = "analysis"
+    if 'retry_analysis' not in st.session_state:
+        st.session_state.retry_analysis = False
 
     # Sidebar - File upload and theme navigation
     with st.sidebar:
@@ -73,7 +102,10 @@ def main():
                 st.markdown(f"[Theme {theme_id}: {theme_title}](#theme-{idx})")
 
     # Main content area
-    if analyze_button and uploaded_file:
+    if (analyze_button or st.session_state.retry_analysis) and uploaded_file:
+        # Reset retry state so we don't loop infinitely
+        st.session_state.retry_analysis = False
+
         with st.spinner("Analyzing transcript... This may take a minute."):
             # Parse file
             transcript_text = parse_uploaded_file(uploaded_file)
@@ -102,6 +134,9 @@ def main():
                     "Analysis failed after multiple attempts. "
                     "The AI returned an invalid response. Please try again."
                 )
+                if st.button("Retry Analysis"):
+                    st.session_state.retry_analysis = True
+                    st.rerun()
                 st.stop()
 
         st.success(f"Analysis complete! Results saved to: {saved_path}")
