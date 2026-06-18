@@ -111,7 +111,7 @@ def transcribe_and_diarize(audio_file_path, hf_token=None, model_size="base", de
     audio = whisperx.load_audio(audio_file_path)
     
     print(f"DEBUG: [Step 1] Transcribing audio (batch_size={batch_size})...")
-    result = model.transcribe(audio, batch_size=batch_size)
+    result = model.transcribe(audio, batch_size=batch_size, language="en")
     print("DEBUG: [Step 1] Transcription complete.")
     
     # 2. Align whisper output
